@@ -1,11 +1,15 @@
 use std::{
-    fs::{canonicalize, create_dir_all, read_to_string, write},
+    fs::{canonicalize, create_dir_all, read, read_to_string, write},
+    io::Read,
     path::PathBuf,
     str::FromStr,
 };
 
 use clap::{Parser, Subcommand};
 use configparser::ini::Ini;
+use flate2::read::ZlibDecoder;
+
+mod serializer;
 
 const GOT_DIR: &str = ".got";
 
@@ -19,10 +23,10 @@ struct Cli {
 enum Commands {
     Add,
     CatFile,
-    Checkout { path: String },
+    Checkout,
     Commit,
     HashObject,
-    Init,
+    Init { path: String },
     Log,
     LsTree,
     Merge,
@@ -32,6 +36,33 @@ enum Commands {
     ShowRef,
     Tag,
 }
+
+trait GitObject {}
+
+struct GitCommit {
+    content: String,
+}
+impl GitObject for GitCommit {}
+
+struct GitTree {
+    content: String,
+}
+impl GitObject for GitTree {}
+
+struct GitTag {
+    content: String,
+}
+impl GitObject for GitTag {}
+
+struct GitBlob {
+    content: String,
+}
+impl GitBlob {
+    fn new(content: String) -> Self {
+        return Self { content };
+    }
+}
+impl GitObject for GitBlob {}
 
 struct Repository {
     worktree: PathBuf,
@@ -194,6 +225,48 @@ impl Repository {
             }
         }
     }
+
+    fn object_read(&self, sha: &str) -> Result<Box<dyn GitObject>, &'static str> {
+        let file_relative_path = format!("objects/{}/{}", &sha[..2], &sha[2..]);
+        let file_relative_path_str = file_relative_path.as_str();
+        let file_path = self.repo_file(file_relative_path_str, false);
+
+        let compressed_file_contents = read(file_path).expect("File does not exist");
+        let mut file_contents_decoder = ZlibDecoder::new(&compressed_file_contents[..]);
+        let mut file_contents = String::new();
+        file_contents_decoder
+            .read_to_string(&mut file_contents)
+            .unwrap();
+
+        let object_type_index = match file_contents.find(' ') {
+            Some(index) => index,
+            None => return Err("File is malformed"),
+        };
+        let object_type = &file_contents[0..object_type_index];
+
+        let object_size_index = match file_contents.find('\x00') {
+            Some(index) => index,
+            None => return Err("File is malformed"),
+        };
+
+        let object_content = &file_contents[object_size_index..];
+
+        match object_type {
+            "commit" => Ok(Box::new(GitCommit {
+                content: object_content.to_string(),
+            })),
+            "tree" => Ok(Box::new(GitTree {
+                content: object_content.to_string(),
+            })),
+            "tag" => Ok(Box::new(GitTag {
+                content: object_content.to_string(),
+            })),
+            "blob" => Ok(Box::new(GitBlob {
+                content: object_content.to_string(),
+            })),
+            _ => Err("Object type does not match any known types."),
+        }
+    }
 }
 
 fn main() {
@@ -206,18 +279,20 @@ fn main() {
         Some(Commands::CatFile) => {
             println!("Init");
         }
-        Some(Commands::Checkout { path }) => {
-            println!("Checkout path: {:?}", path);
-            Repository::create(PathBuf::from(path));
-        }
+        Some(Commands::Checkout) => {}
         Some(Commands::Commit) => {
             println!("Commit");
         }
         Some(Commands::HashObject) => {
             println!("HashObject");
         }
-        Some(Commands::Init) => {
+        Some(Commands::Init { path }) => {
             println!("Init");
+            println!("Checkout path: {:?}", path);
+            let repo = Repository::create(PathBuf::from(path)).unwrap();
+
+            repo.object_read("0db144f804c5e452b7b3574ebc77c0256e746d86")
+                .expect("Could not read object");
         }
         Some(Commands::Log) => {
             println!("Log");
