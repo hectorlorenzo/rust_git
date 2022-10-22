@@ -1,8 +1,6 @@
 use std::{
-    error::Error,
-    fmt,
-    fs::{create_dir, create_dir_all, read_to_string},
-    path::{Path, PathBuf},
+    fs::{create_dir_all, read_to_string, write},
+    path::PathBuf,
     str::FromStr,
 };
 
@@ -77,6 +75,16 @@ impl Repository {
         };
     }
 
+    fn generate_default_config() -> Ini {
+        let mut config = Ini::new();
+
+        config.set("core", "repositoryformatversion", Some(String::from("0")));
+        config.set("core", "filemode", Some(String::from("false")));
+        config.set("core", "bare", Some(String::from("false")));
+
+        return config;
+    }
+
     fn create(path: PathBuf) -> Result<Self, String> {
         // Does the path exist and it is a dir? Create subdirs and return Repo
         // Does the path exist and it is not a dir? Return Error
@@ -102,6 +110,23 @@ impl Repository {
         repo.repo_dir("refs/tags", true);
         repo.repo_dir("refs/heads", true);
 
+        // Create description file
+        write(
+            repo.repo_file("description", false),
+            "Unnamed repository; edit this file 'description' to name the repository.\n",
+        )
+        .expect("Could not write description file");
+
+        // Write HEAD file
+        write(repo.repo_file("HEAD", false), "ref: refs/heads/master\n")
+            .expect("Could not write HEAD file");
+
+        // Write configuration file
+        let config = Repository::generate_default_config();
+        config
+            .write(repo.repo_file("config", false))
+            .expect("Could not write configuration file on repo creation");
+
         Ok(repo)
     }
 
@@ -116,9 +141,7 @@ impl Repository {
     fn repo_file(&self, rel_path_str: &str, should_create_dir: bool) -> PathBuf {
         let path = self.repo_path(rel_path_str);
 
-        if !path.is_file() {
-            panic!("{} is not a file path", rel_path_str);
-        } else if !path.parent().is_none() {
+        if !path.parent().is_none() {
             return path;
         } else {
             let mut dir_path = path.clone();
