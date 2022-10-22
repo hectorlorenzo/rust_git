@@ -1,5 +1,5 @@
 use std::{
-    fs::{create_dir_all, read_to_string, write},
+    fs::{canonicalize, create_dir_all, read_to_string, write},
     path::PathBuf,
     str::FromStr,
 };
@@ -99,7 +99,7 @@ impl Repository {
                 ));
             }
         } else {
-            create_dir_all(path.clone()).expect("Could not create repository");
+            create_dir_all(&path).expect("Could not create repository");
             path
         };
 
@@ -128,6 +128,23 @@ impl Repository {
             .expect("Could not write configuration file on repo creation");
 
         Ok(repo)
+    }
+
+    // From current repository, return a parent directory that is an active repository.
+    // We identify an active repository because it contains a ".got" directory.
+    // Useful when we want to execute commands when inside child directories.
+    fn repo_find(path: &PathBuf) -> Option<PathBuf> {
+        let canonical_path = canonicalize(&path).expect("Could not convert path to canonical");
+        let parent_path = canonical_path.parent();
+        let maybe_got_path = canonical_path.join(GOT_DIR).is_dir();
+
+        if parent_path.is_none() {
+            return None;
+        } else if maybe_got_path {
+            return Some(canonical_path);
+        } else {
+            return Repository::repo_find(&parent_path.unwrap().to_owned());
+        }
     }
 
     // Returns a new path that is relative to .got dir
@@ -168,7 +185,7 @@ impl Repository {
             }
         } else {
             if should_create_dir {
-                match create_dir_all(path.clone()) {
+                match create_dir_all(&path) {
                     Ok(()) => Some(path),
                     Err(error) => panic!("Could not create directory: {:?}", error),
                 }
