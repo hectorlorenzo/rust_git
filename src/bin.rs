@@ -1,13 +1,14 @@
 use std::{
-    fs::{canonicalize, create_dir_all, read, read_to_string, write},
-    io::Read,
+    fs::{canonicalize, create_dir_all, read, read_to_string, write, File},
+    io::{Read, Write},
     path::PathBuf,
-    str::FromStr,
+    str::{from_utf8, FromStr},
 };
 
 use clap::{Parser, Subcommand};
 use configparser::ini::Ini;
-use flate2::read::ZlibDecoder;
+use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+use sha1::{Digest, Sha1};
 
 mod serializer;
 
@@ -22,7 +23,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Add,
-    CatFile,
+    CatFile { object_type: String, object: String },
     Checkout,
     Commit,
     HashObject,
@@ -37,32 +38,74 @@ enum Commands {
     Tag,
 }
 
-trait GitObject {}
+trait GitObject {
+    fn object_type(&self) -> &str;
+    fn content(&self) -> &str;
+    fn serialise(&self) -> &str {
+        return self.content();
+    }
+    fn deserialise(&mut self, content: &str);
+}
 
 struct GitCommit {
     content: String,
 }
-impl GitObject for GitCommit {}
+impl GitObject for GitCommit {
+    fn object_type(&self) -> &str {
+        "commit"
+    }
+    fn content(&self) -> &str {
+        &self.content[..]
+    }
+    fn deserialise(&mut self, content: &str) {
+        self.content = content.to_owned();
+    }
+}
 
 struct GitTree {
     content: String,
 }
-impl GitObject for GitTree {}
+impl GitObject for GitTree {
+    fn object_type(&self) -> &str {
+        "tree"
+    }
+    fn content(&self) -> &str {
+        &self.content[..]
+    }
+    fn deserialise(&mut self, content: &str) {
+        self.content = content.to_owned();
+    }
+}
 
 struct GitTag {
     content: String,
 }
-impl GitObject for GitTag {}
+impl GitObject for GitTag {
+    fn object_type(&self) -> &str {
+        "tag"
+    }
+    fn content(&self) -> &str {
+        &self.content[..]
+    }
+    fn deserialise(&mut self, content: &str) {
+        self.content = content.to_owned();
+    }
+}
 
 struct GitBlob {
     content: String,
 }
-impl GitBlob {
-    fn new(content: String) -> Self {
-        return Self { content };
+impl GitObject for GitBlob {
+    fn object_type(&self) -> &str {
+        "blob"
+    }
+    fn content(&self) -> &str {
+        &self.content[..]
+    }
+    fn deserialise(&mut self, content: &str) {
+        self.content = content.to_owned();
     }
 }
-impl GitObject for GitBlob {}
 
 struct Repository {
     worktree: PathBuf,
@@ -164,7 +207,7 @@ impl Repository {
     // From current repository, return a parent directory that is an active repository.
     // We identify an active repository because it contains a ".got" directory.
     // Useful when we want to execute commands when inside child directories.
-    fn repo_find(path: &PathBuf) -> Option<PathBuf> {
+    fn repo_find(path: &PathBuf) -> Option<Self> {
         let canonical_path = canonicalize(&path).expect("Could not convert path to canonical");
         let parent_path = canonical_path.parent();
         let maybe_got_path = canonical_path.join(GOT_DIR).is_dir();
@@ -172,7 +215,7 @@ impl Repository {
         if parent_path.is_none() {
             return None;
         } else if maybe_got_path {
-            return Some(canonical_path);
+            return Some(Repository::new(canonical_path, false));
         } else {
             return Repository::repo_find(&parent_path.unwrap().to_owned());
         }
@@ -226,6 +269,30 @@ impl Repository {
         }
     }
 
+    fn object_find(&self, name: &'static str, _format: &str, _follow: bool) -> &'static str {
+        return name;
+    }
+
+    fn object_write(&self, object: &dyn GitObject) {
+        let data = object.serialise();
+        let content_with_headers = format!("{} {}\x00{}", object.object_type(), data.len(), data);
+        let mut hasher = Sha1::new();
+        hasher.update(&content_with_headers);
+
+        let hash = &hasher.finalize()[..];
+        let folder_name = from_utf8(&hash[..2]).unwrap();
+        let filename = from_utf8(&hash[2..]).unwrap();
+
+        let file_path = self.repo_file(&format!("{}/{}", folder_name, filename)[..], true);
+
+        let file_writer = File::create(file_path).expect("Could not create file.");
+
+        let mut file_contents_encoder = ZlibEncoder::new(file_writer, Compression::fast());
+        file_contents_encoder
+            .write(content_with_headers.as_bytes())
+            .expect("Could not compress object contents.");
+    }
+
     fn object_read(&self, sha: &str) -> Result<Box<dyn GitObject>, &'static str> {
         let file_relative_path = format!("objects/{}/{}", &sha[..2], &sha[2..]);
         let file_relative_path_str = file_relative_path.as_str();
@@ -248,23 +315,22 @@ impl Repository {
             Some(index) => index,
             None => return Err("File is malformed"),
         };
-
+        let object_size = &file_contents[object_type_index + 1..object_size_index];
         let object_content = &file_contents[object_size_index..];
+        let real_object_size = object_content.len() - 1;
 
-        match object_type {
-            "commit" => Ok(Box::new(GitCommit {
-                content: object_content.to_string(),
-            })),
-            "tree" => Ok(Box::new(GitTree {
-                content: object_content.to_string(),
-            })),
-            "tag" => Ok(Box::new(GitTag {
-                content: object_content.to_string(),
-            })),
-            "blob" => Ok(Box::new(GitBlob {
-                content: object_content.to_string(),
-            })),
-            _ => Err("Object type does not match any known types."),
+        if object_size.parse::<usize>().unwrap() != real_object_size {
+            return Err("Could not read object because sizes mismatch (object is malformed).");
+        } else {
+            let content = object_content.to_string();
+
+            match object_type {
+                "commit" => Ok(Box::new(GitCommit { content })),
+                "tree" => Ok(Box::new(GitTree { content })),
+                "tag" => Ok(Box::new(GitTag { content })),
+                "blob" => Ok(Box::new(GitBlob { content })),
+                _ => Err("Object type does not match any known types."),
+            }
         }
     }
 }
@@ -276,8 +342,20 @@ fn main() {
         Some(Commands::Add) => {
             println!("Add");
         }
-        Some(Commands::CatFile) => {
-            println!("Init");
+        Some(Commands::CatFile {
+            object_type,
+            object,
+        }) => {
+            let repo = match Repository::repo_find(&PathBuf::from("./test")) {
+                Some(repo) => repo,
+                None => panic!("Could not find repository"),
+            };
+
+            let obj = repo
+                .object_read(object)
+                .expect("Could not find object with given hash");
+
+            println!("{}", obj.serialise());
         }
         Some(Commands::Checkout) => {}
         Some(Commands::Commit) => {
@@ -287,12 +365,7 @@ fn main() {
             println!("HashObject");
         }
         Some(Commands::Init { path }) => {
-            println!("Init");
-            println!("Checkout path: {:?}", path);
-            let repo = Repository::create(PathBuf::from(path)).unwrap();
-
-            repo.object_read("0db144f804c5e452b7b3574ebc77c0256e746d86")
-                .expect("Could not read object");
+            Repository::create(PathBuf::from(path)).unwrap();
         }
         Some(Commands::Log) => {
             println!("Log");
