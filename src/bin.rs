@@ -1,4 +1,5 @@
 use std::{
+    env,
     fs::{canonicalize, create_dir_all, read, read_to_string, write, File},
     io::{Read, Write},
     path::PathBuf,
@@ -23,11 +24,24 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Add,
-    CatFile { object_type: String, object: String },
+    CatFile {
+        object_type: String,
+        object: String,
+    },
     Checkout,
     Commit,
-    HashObject,
-    Init { path: String },
+    HashObject {
+        #[arg(short, long)]
+        r#type: Option<String>,
+
+        #[arg(short, long)]
+        write: Option<bool>,
+
+        filepath: String,
+    },
+    Init {
+        path: String,
+    },
     Log,
     LsTree,
     Merge,
@@ -50,6 +64,11 @@ trait GitObject {
 struct GitCommit {
     content: String,
 }
+impl GitCommit {
+    fn new(content: String) -> Self {
+        Self { content }
+    }
+}
 impl GitObject for GitCommit {
     fn object_type(&self) -> &str {
         "commit"
@@ -64,6 +83,11 @@ impl GitObject for GitCommit {
 
 struct GitTree {
     content: String,
+}
+impl GitTree {
+    fn new(content: String) -> Self {
+        Self { content }
+    }
 }
 impl GitObject for GitTree {
     fn object_type(&self) -> &str {
@@ -80,6 +104,11 @@ impl GitObject for GitTree {
 struct GitTag {
     content: String,
 }
+impl GitTag {
+    fn new(content: String) -> Self {
+        Self { content }
+    }
+}
 impl GitObject for GitTag {
     fn object_type(&self) -> &str {
         "tag"
@@ -94,6 +123,11 @@ impl GitObject for GitTag {
 
 struct GitBlob {
     content: String,
+}
+impl GitBlob {
+    fn new(content: String) -> Self {
+        Self { content }
+    }
 }
 impl GitObject for GitBlob {
     fn object_type(&self) -> &str {
@@ -207,7 +241,7 @@ impl Repository {
     // From current repository, return a parent directory that is an active repository.
     // We identify an active repository because it contains a ".got" directory.
     // Useful when we want to execute commands when inside child directories.
-    fn repo_find(path: &PathBuf) -> Option<Self> {
+    fn repo_find(path: PathBuf) -> Option<Self> {
         let canonical_path = canonicalize(&path).expect("Could not convert path to canonical");
         let parent_path = canonical_path.parent();
         let maybe_got_path = canonical_path.join(GOT_DIR).is_dir();
@@ -217,7 +251,7 @@ impl Repository {
         } else if maybe_got_path {
             return Some(Repository::new(canonical_path, false));
         } else {
-            return Repository::repo_find(&parent_path.unwrap().to_owned());
+            return Repository::repo_find(parent_path.unwrap().to_owned());
         }
     }
 
@@ -269,30 +303,39 @@ impl Repository {
         }
     }
 
-    fn object_find(&self, name: &'static str, _format: &str, _follow: bool) -> &'static str {
-        return name;
+    fn object_find(&self, name: &str, _format: &str, _follow: bool) -> String {
+        return name.to_owned();
     }
 
-    fn object_write(&self, object: &dyn GitObject) {
+    fn object_write(&self, object: &dyn GitObject, actually_write: bool) -> String {
         let data = object.serialise();
         let content_with_headers = format!("{} {}\x00{}", object.object_type(), data.len(), data);
-        let mut hasher = Sha1::new();
-        hasher.update(&content_with_headers);
 
-        let hash = &hasher.finalize()[..];
-        let folder_name = from_utf8(&hash[..2]).unwrap();
-        let filename = from_utf8(&hash[2..]).unwrap();
+        let mut sh = Sha1::default();
+        sh.update(b"hello world");
 
-        let file_path = self.repo_file(&format!("{}/{}", folder_name, filename)[..], true);
+        let hash_result = sh.finalize();
 
-        let file_writer = File::create(file_path).expect("Could not create file.");
+        let hash = format!("{:x}", hash_result);
 
-        let mut file_contents_encoder = ZlibEncoder::new(file_writer, Compression::fast());
-        file_contents_encoder
-            .write(content_with_headers.as_bytes())
-            .expect("Could not compress object contents.");
+        if actually_write {
+            let folder_name = &hash[..2];
+            let filename = &hash[2..];
+
+            let file_path = self.repo_file(&format!("{}/{}", folder_name, filename)[..], true);
+
+            let file_writer = File::create(file_path).expect("Could not create file.");
+
+            let mut file_contents_encoder = ZlibEncoder::new(file_writer, Compression::fast());
+            file_contents_encoder
+                .write(content_with_headers.as_bytes())
+                .expect("Could not compress object contents.");
+        }
+
+        return hash.to_owned();
     }
 
+    // Returns object associated to a given hash.
     fn object_read(&self, sha: &str) -> Result<Box<dyn GitObject>, &'static str> {
         let file_relative_path = format!("objects/{}/{}", &sha[..2], &sha[2..]);
         let file_relative_path_str = file_relative_path.as_str();
@@ -340,13 +383,13 @@ fn main() {
 
     match &cli.command {
         Some(Commands::Add) => {
-            println!("Add");
+            println!("{:?}", env::current_dir());
         }
         Some(Commands::CatFile {
             object_type,
             object,
         }) => {
-            let repo = match Repository::repo_find(&PathBuf::from("./test")) {
+            let repo = match Repository::repo_find(env::current_dir().unwrap()) {
                 Some(repo) => repo,
                 None => panic!("Could not find repository"),
             };
@@ -361,8 +404,37 @@ fn main() {
         Some(Commands::Commit) => {
             println!("Commit");
         }
-        Some(Commands::HashObject) => {
-            println!("HashObject");
+        Some(Commands::HashObject {
+            r#type,
+            write,
+            filepath,
+        }) => {
+            let repo = match Repository::repo_find(env::current_dir().unwrap()) {
+                Some(repo) => repo,
+                None => panic!("Could not find repository"),
+            };
+            let file_content = read_to_string(filepath).expect("Could not read file");
+            let should_write = write.unwrap_or(false);
+
+            match r#type.as_deref() {
+                Some("blob") | None => println!(
+                    "{}",
+                    repo.object_write(&GitBlob::new(file_content), should_write)
+                ),
+                Some("commit") => println!(
+                    "{}",
+                    repo.object_write(&GitCommit::new(file_content), should_write)
+                ),
+                Some("tree") => println!(
+                    "{}",
+                    repo.object_write(&GitTree::new(file_content), should_write)
+                ),
+                Some("tag") => println!(
+                    "{}",
+                    repo.object_write(&GitTag::new(file_content), should_write)
+                ),
+                Some(_) => panic!("Unknown object type."),
+            };
         }
         Some(Commands::Init { path }) => {
             Repository::create(PathBuf::from(path)).unwrap();

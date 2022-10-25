@@ -13,7 +13,7 @@ name = "gotbin"
 path = "src/bin.rs"
 
 [dependencies]
-clap = { version = "3.2.22", features = ["derive"] }
+clap = { version = "4.0.18", features = ["derive"] }
 configparser = "3.0.2"
-sha-1 = "0.10.0"
+sha1 = "0.10.5"
 flate2 = "1.0.24"
