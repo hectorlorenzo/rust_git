@@ -34,8 +34,8 @@ enum Commands {
         #[arg(short, long)]
         r#type: Option<String>,
 
-        #[arg(short, long)]
-        write: Option<bool>,
+        #[arg(short, long, default_value_t = false)]
+        write: bool,
 
         filepath: String,
     },
@@ -60,6 +60,16 @@ enum GitObject {
 }
 
 impl GitObject {
+    fn new(type_str: &str, content: String) -> Self {
+        match type_str {
+            "commit" => GitObject::Commit(content),
+            "blob" => GitObject::Blob(content),
+            "tag" => GitObject::Tag(content),
+            "tree" => GitObject::Tree(content),
+            _ => panic!("Incorrect type to initialise an object."),
+        }
+    }
+
     fn type_string(&self) -> String {
         match self {
             GitObject::Commit(_) => String::from("commit"),
@@ -76,6 +86,25 @@ impl GitObject {
             GitObject::Tag(content) => content,
             GitObject::Tree(content) => content,
         }
+    }
+
+    fn content_with_headers(&self) -> String {
+        format!("{}{}", self.encoded_header(), self.serialise())
+    }
+
+    fn encoded_header(&self) -> String {
+        let content = self.serialise();
+
+        format!("{} {}\x00", self.type_string(), content.len())
+    }
+
+    fn hash(&self) -> String {
+        let mut sh = Sha1::default();
+        sh.update(self.encoded_header());
+
+        let hash_result = sh.finalize();
+
+        format!("{:x}", hash_result)
     }
 }
 
@@ -246,27 +275,23 @@ impl Repository {
     }
 
     fn object_write(&self, object: GitObject, actually_write: bool) -> String {
-        let data = object.serialise();
-        let content_with_headers = format!("{} {}\x00{}", object.type_string(), data.len(), data);
-
-        let mut sh = Sha1::default();
-        sh.update(b"hello world");
-
-        let hash_result = sh.finalize();
-
-        let hash = format!("{:x}", hash_result);
+        let hash = object.hash();
 
         if actually_write {
             let folder_name = &hash[..2];
             let filename = &hash[2..];
 
-            let file_path = self.repo_file(&format!("{}/{}", folder_name, filename)[..], true);
+            let file_path =
+                self.repo_file(&format!("objects/{}/{}", folder_name, filename)[..], true);
 
+            // According to docs, "Depending on the platform, this function may fail if the full directory path does not exist."
+            // we create directories, just in case.
+            create_dir_all(file_path.parent().unwrap()).expect("Could not create directory.");
             let file_writer = File::create(file_path).expect("Could not create file.");
 
             let mut file_contents_encoder = ZlibEncoder::new(file_writer, Compression::fast());
             file_contents_encoder
-                .write(content_with_headers.as_bytes())
+                .write(object.content_with_headers().as_bytes())
                 .expect("Could not compress object contents.");
         }
 
@@ -347,32 +372,24 @@ fn main() {
             write,
             filepath,
         }) => {
-            let repo = match Repository::repo_find(env::current_dir().unwrap()) {
-                Some(repo) => repo,
-                None => panic!("Could not find repository"),
-            };
             let file_content = read_to_string(filepath).expect("Could not read file");
-            let should_write = write.unwrap_or(false);
+            let object_type = r#type.as_deref().unwrap_or("blob");
+            let object = GitObject::new(object_type, file_content);
 
-            match r#type.as_deref() {
-                Some("blob") | None => println!(
-                    "{}",
-                    repo.object_write(GitObject::Blob(file_content), should_write)
-                ),
-                Some("commit") => println!(
-                    "{}",
-                    repo.object_write(GitObject::Commit(file_content), should_write)
-                ),
-                Some("tree") => println!(
-                    "{}",
-                    repo.object_write(GitObject::Tree(file_content), should_write)
-                ),
-                Some("tag") => println!(
-                    "{}",
-                    repo.object_write(GitObject::Tag(file_content), should_write)
-                ),
-                Some(_) => panic!("Unknown object type."),
-            };
+            // If we are in a repo, we should offer the option of writing file in the repo.
+            // If we are not, we should just show the hash of this file.
+            match Repository::repo_find(env::current_dir().unwrap()) {
+                Some(repo) => {
+                    if *write {
+                        println!("{}", repo.object_write(object, true));
+                    } else {
+                        println!("{}", object.hash())
+                    }
+                }
+                None => {
+                    println!("{}", object.hash())
+                }
+            }
         }
         Some(Commands::Init { path }) => {
             Repository::create(PathBuf::from(path)).unwrap();
