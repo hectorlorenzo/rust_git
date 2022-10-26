@@ -100,7 +100,7 @@ impl GitObject {
 
     fn hash(&self) -> String {
         let mut sh = Sha1::default();
-        sh.update(self.encoded_header());
+        sh.update(self.content_with_headers());
 
         let hash_result = sh.finalize();
 
