@@ -11,8 +11,6 @@ use configparser::ini::Ini;
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use sha1::{Digest, Sha1};
 
-mod serializer;
-
 const GOT_DIR: &str = ".got";
 
 #[derive(Parser)]
