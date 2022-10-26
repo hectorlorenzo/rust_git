@@ -52,92 +52,30 @@ enum Commands {
     Tag,
 }
 
-trait GitObject {
-    fn object_type(&self) -> &str;
-    fn content(&self) -> &str;
-    fn serialise(&self) -> &str {
-        return self.content();
-    }
-    fn deserialise(&mut self, content: &str);
+enum GitObject {
+    Commit(String),
+    Blob(String),
+    Tag(String),
+    Tree(String),
 }
 
-struct GitCommit {
-    content: String,
-}
-impl GitCommit {
-    fn new(content: String) -> Self {
-        Self { content }
+impl GitObject {
+    fn type_string(&self) -> String {
+        match self {
+            GitObject::Commit(_) => String::from("commit"),
+            GitObject::Blob(_) => String::from("blob"),
+            GitObject::Tag(_) => String::from("tag"),
+            GitObject::Tree(_) => String::from("tree"),
+        }
     }
-}
-impl GitObject for GitCommit {
-    fn object_type(&self) -> &str {
-        "commit"
-    }
-    fn content(&self) -> &str {
-        &self.content[..]
-    }
-    fn deserialise(&mut self, content: &str) {
-        self.content = content.to_owned();
-    }
-}
 
-struct GitTree {
-    content: String,
-}
-impl GitTree {
-    fn new(content: String) -> Self {
-        Self { content }
-    }
-}
-impl GitObject for GitTree {
-    fn object_type(&self) -> &str {
-        "tree"
-    }
-    fn content(&self) -> &str {
-        &self.content[..]
-    }
-    fn deserialise(&mut self, content: &str) {
-        self.content = content.to_owned();
-    }
-}
-
-struct GitTag {
-    content: String,
-}
-impl GitTag {
-    fn new(content: String) -> Self {
-        Self { content }
-    }
-}
-impl GitObject for GitTag {
-    fn object_type(&self) -> &str {
-        "tag"
-    }
-    fn content(&self) -> &str {
-        &self.content[..]
-    }
-    fn deserialise(&mut self, content: &str) {
-        self.content = content.to_owned();
-    }
-}
-
-struct GitBlob {
-    content: String,
-}
-impl GitBlob {
-    fn new(content: String) -> Self {
-        Self { content }
-    }
-}
-impl GitObject for GitBlob {
-    fn object_type(&self) -> &str {
-        "blob"
-    }
-    fn content(&self) -> &str {
-        &self.content[..]
-    }
-    fn deserialise(&mut self, content: &str) {
-        self.content = content.to_owned();
+    fn serialise(&self) -> &String {
+        match self {
+            GitObject::Commit(content) => content,
+            GitObject::Blob(content) => content,
+            GitObject::Tag(content) => content,
+            GitObject::Tree(content) => content,
+        }
     }
 }
 
@@ -307,9 +245,9 @@ impl Repository {
         return name.to_owned();
     }
 
-    fn object_write(&self, object: &dyn GitObject, actually_write: bool) -> String {
+    fn object_write(&self, object: GitObject, actually_write: bool) -> String {
         let data = object.serialise();
-        let content_with_headers = format!("{} {}\x00{}", object.object_type(), data.len(), data);
+        let content_with_headers = format!("{} {}\x00{}", object.type_string(), data.len(), data);
 
         let mut sh = Sha1::default();
         sh.update(b"hello world");
@@ -336,7 +274,7 @@ impl Repository {
     }
 
     // Returns object associated to a given hash.
-    fn object_read(&self, sha: &str) -> Result<Box<dyn GitObject>, &'static str> {
+    fn object_read(&self, sha: &str) -> Result<GitObject, &'static str> {
         let file_relative_path = format!("objects/{}/{}", &sha[..2], &sha[2..]);
         let file_relative_path_str = file_relative_path.as_str();
         let file_path = self.repo_file(file_relative_path_str, false);
@@ -368,10 +306,10 @@ impl Repository {
             let content = object_content.to_string();
 
             match object_type {
-                "commit" => Ok(Box::new(GitCommit { content })),
-                "tree" => Ok(Box::new(GitTree { content })),
-                "tag" => Ok(Box::new(GitTag { content })),
-                "blob" => Ok(Box::new(GitBlob { content })),
+                "commit" => Ok(GitObject::Commit(content)),
+                "tree" => Ok(GitObject::Tree(content)),
+                "tag" => Ok(GitObject::Tag(content)),
+                "blob" => Ok(GitObject::Blob(content)),
                 _ => Err("Object type does not match any known types."),
             }
         }
@@ -419,19 +357,19 @@ fn main() {
             match r#type.as_deref() {
                 Some("blob") | None => println!(
                     "{}",
-                    repo.object_write(&GitBlob::new(file_content), should_write)
+                    repo.object_write(GitObject::Blob(file_content), should_write)
                 ),
                 Some("commit") => println!(
                     "{}",
-                    repo.object_write(&GitCommit::new(file_content), should_write)
+                    repo.object_write(GitObject::Commit(file_content), should_write)
                 ),
                 Some("tree") => println!(
                     "{}",
-                    repo.object_write(&GitTree::new(file_content), should_write)
+                    repo.object_write(GitObject::Tree(file_content), should_write)
                 ),
                 Some("tag") => println!(
                     "{}",
-                    repo.object_write(&GitTag::new(file_content), should_write)
+                    repo.object_write(GitObject::Tag(file_content), should_write)
                 ),
                 Some(_) => panic!("Unknown object type."),
             };
