@@ -15,6 +15,21 @@ use git_object::GitObject;
 
 const GOT_DIR: &str = ".got";
 
+fn kvlm_serialize(kvv: &Vec<(&str, String)>) -> String {
+    return kvv.iter().fold(String::from(""), |acc, current| {
+        let key = current.0;
+        let value = &current.1;
+
+        // if key is an empty string, it means it is the content, and we should format
+        // it differently (do not show they key, add a line break before it).
+        if key == "" {
+            acc + format!("\n{}", value).as_str()
+        } else {
+            acc + format!("{} {}\n", key, value).as_str()
+        }
+    });
+}
+
 // Parses a Key-Value List with Message string (hence kvlm).
 // This message will look something like this:
 //
