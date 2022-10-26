@@ -15,6 +15,55 @@ use git_object::GitObject;
 
 const GOT_DIR: &str = ".got";
 
+// Parses a Key-Value List with Message string (hence kvlm).
+// This message will look something like this:
+//
+// ```
+// tree 1660685a18e10e2a097a8627ddb75f8dab7e8a3a
+// parent 52f5c83450d57f83d9d9255d96b66283d54283d8
+// author Hector Lorenzo Pons <hector@hectorlorenzo.me> 1666772992 +0100
+// committer Hector Lorenzo Pons <hector@hectorlorenzo.me> 1666772992 +0100
+//
+// Remove serialiser mod
+// ```
+fn kvlm_parser<'a>(
+    content: &'a str,
+    kvv: Option<&mut Vec<(&'a str, String)>>,
+) -> Result<Vec<(&'a str, String)>, &'static str> {
+    // we assume we will find a header line, so we look for its key and its value
+    // key will be from beginning to first empty space, value from this point to line break
+    let blank_space_maybe = content.find(' ');
+    let line_break_maybe = content.find('\n');
+
+    if line_break_maybe.is_none() {
+        return Err("Could not find a new line break, content is malformed");
+    }
+
+    let line_break = line_break_maybe.unwrap();
+
+    let maybe_k = vec![];
+    let mut temp_kvv = match kvv {
+        Some(k) => k.to_owned(),
+        None => maybe_k,
+    };
+
+    // if there is no blank space, it means that we have reached a blank line,
+    // and we can start storing the message. If there is a blank space, we have
+    // a header line.
+    if blank_space_maybe.is_none() || (blank_space_maybe.unwrap() > line_break) {
+        temp_kvv.push(("", (&content[line_break + 1..]).to_owned()));
+        return Ok(temp_kvv);
+    } else {
+        let blank_space = blank_space_maybe.unwrap();
+
+        temp_kvv.push((
+            &content[..blank_space],
+            (&content[blank_space + 1..line_break]).to_owned(),
+        ));
+        return kvlm_parser(&content[line_break + 1..], Some(&mut temp_kvv));
+    }
+}
+
 #[derive(Parser)]
 struct Cli {
     #[clap(subcommand)]
@@ -308,9 +357,7 @@ fn main() {
             println!("{}", obj.serialise());
         }
         Some(Commands::Checkout) => {}
-        Some(Commands::Commit) => {
-            println!("Commit");
-        }
+        Some(Commands::Commit) => {}
         Some(Commands::HashObject {
             r#type,
             write,
