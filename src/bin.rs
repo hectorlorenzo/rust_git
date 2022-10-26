@@ -41,10 +41,12 @@ fn kvlm_parser<'a>(
 
     let line_break = line_break_maybe.unwrap();
 
-    let maybe_k = vec![];
+    // kvv is an optional argument because we only pass it when doing recursion.
+    // Because it is optional, we need to create a vector if None has been passed
+    // (when method is called on the first recursion).
     let mut temp_kvv = match kvv {
         Some(k) => k.to_owned(),
-        None => maybe_k,
+        None => vec![],
     };
 
     // if there is no blank space, it means that we have reached a blank line,
