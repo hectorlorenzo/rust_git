@@ -1,15 +1,17 @@
+mod git_object;
+
 use std::{
     env,
     fs::{canonicalize, create_dir_all, read, read_to_string, write, File},
     io::{Read, Write},
     path::PathBuf,
-    str::{from_utf8, FromStr},
+    str::FromStr,
 };
 
 use clap::{Parser, Subcommand};
 use configparser::ini::Ini;
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
-use sha1::{Digest, Sha1};
+use git_object::GitObject;
 
 const GOT_DIR: &str = ".got";
 
@@ -48,62 +50,6 @@ enum Commands {
     Rm,
     ShowRef,
     Tag,
-}
-
-enum GitObject {
-    Commit(String),
-    Blob(String),
-    Tag(String),
-    Tree(String),
-}
-
-impl GitObject {
-    fn new(type_str: &str, content: String) -> Self {
-        match type_str {
-            "commit" => GitObject::Commit(content),
-            "blob" => GitObject::Blob(content),
-            "tag" => GitObject::Tag(content),
-            "tree" => GitObject::Tree(content),
-            _ => panic!("Incorrect type to initialise an object."),
-        }
-    }
-
-    fn type_string(&self) -> String {
-        match self {
-            GitObject::Commit(_) => String::from("commit"),
-            GitObject::Blob(_) => String::from("blob"),
-            GitObject::Tag(_) => String::from("tag"),
-            GitObject::Tree(_) => String::from("tree"),
-        }
-    }
-
-    fn serialise(&self) -> &String {
-        match self {
-            GitObject::Commit(content) => content,
-            GitObject::Blob(content) => content,
-            GitObject::Tag(content) => content,
-            GitObject::Tree(content) => content,
-        }
-    }
-
-    fn content_with_headers(&self) -> String {
-        format!("{}{}", self.encoded_header(), self.serialise())
-    }
-
-    fn encoded_header(&self) -> String {
-        let content = self.serialise();
-
-        format!("{} {}\x00", self.type_string(), content.len())
-    }
-
-    fn hash(&self) -> String {
-        let mut sh = Sha1::default();
-        sh.update(self.content_with_headers());
-
-        let hash_result = sh.finalize();
-
-        format!("{:x}", hash_result)
-    }
 }
 
 struct Repository {
@@ -268,7 +214,7 @@ impl Repository {
         }
     }
 
-    fn object_find(&self, name: &str, _format: &str, _follow: bool) -> String {
+    fn _object_find(&self, name: &str, _format: &str, _follow: bool) -> String {
         return name.to_owned();
     }
 
