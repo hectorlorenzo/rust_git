@@ -1,3 +1,4 @@
+use super::Serialise;
 use std::{
     fs::{canonicalize, create_dir_all, metadata, read, read_dir, read_to_string, write, File},
     io::{self, Read, Write},
@@ -208,7 +209,7 @@ impl Repository {
         return name.to_owned();
     }
 
-    pub fn object_write(&self, object: GitObject, actually_write: bool) -> String {
+    pub fn object_write(&self, object: &impl Serialise, actually_write: bool) -> String {
         let hash = object.hash();
 
         if actually_write {

@@ -1,19 +1,13 @@
 mod git_object;
-mod objects;
+mod object;
 mod repository;
 
-use std::{
-    env,
-    fs::read_to_string,
-    io::{self, Result},
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{env, fs::read_to_string, path::PathBuf};
 
 use clap::{Parser, Subcommand};
+use object::{blob::Blob, serialise::Serialise};
 
 use git_object::GitObject;
-use objects::blob::Blob;
 use repository::Repository;
 
 #[derive(Parser)]
@@ -61,13 +55,14 @@ fn commit_command() {
         .list_files()
         .expect("Could not read files in repository.");
 
-    let _blobs = files
+    let blobs = files
         .iter()
         .map(|path| read_to_string(path).unwrap())
-        .map(|data| GitObject::new("blob", data))
-        .for_each(|blob| {
-            repo.object_write(blob, true);
-        });
+        .map(|data| Blob::new(data));
+
+    for blob in blobs {
+        repo.object_write(&blob, true);
+    }
 }
 
 fn main() {
@@ -99,24 +94,26 @@ fn main() {
             write,
             filepath,
         }) => {
-            let file_content = read_to_string(filepath).expect("Could not read file");
-            let object_type = r#type.as_deref().unwrap_or("blob");
-            let object = GitObject::new(object_type, file_content);
+            // TO BE DONE AGAIN
+            // ================
+            // let file_content = read_to_string(filepath).expect("Could not read file");
+            // let object_type = r#type.as_deref().unwrap_or("blob");
+            // let object = GitObject::new(object_type, file_content);
 
-            // If we are in a repo, we should offer the option of writing file in the repo.
-            // If we are not, we should just show the hash of this file.
-            match Repository::repo_find(env::current_dir().unwrap()) {
-                Some(repo) => {
-                    if *write {
-                        println!("{}", repo.object_write(object, true));
-                    } else {
-                        println!("{}", object.hash())
-                    }
-                }
-                None => {
-                    println!("{}", object.hash())
-                }
-            }
+            // // If we are in a repo, we should offer the option of writing file in the repo.
+            // // If we are not, we should just show the hash of this file.
+            // match Repository::repo_find(env::current_dir().unwrap()) {
+            //     Some(repo) => {
+            //         if *write {
+            //             println!("{}", repo.object_write(object, true));
+            //         } else {
+            //             println!("{}", object.hash())
+            //         }
+            //     }
+            //     None => {
+            //         println!("{}", object.hash())
+            //     }
+            // }
         }
         Some(Commands::Init { path }) => {
             Repository::create(PathBuf::from(path)).unwrap();
