@@ -55,6 +55,8 @@ fn commit_command() {
         .list_files()
         .expect("Could not read files in repository.");
 
+    println!("{:?}", files);
+
     let blobs = files
         .iter()
         .map(|path| read_to_string(path).unwrap())

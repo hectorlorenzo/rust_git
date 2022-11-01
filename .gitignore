@@ -1,2 +1,4 @@
-/target
-/test
+target
+.got
+.git
+.DS_Store

@@ -1,5 +1,6 @@
 use super::Serialise;
 use std::{
+    env,
     fs::{canonicalize, create_dir_all, metadata, read, read_dir, read_to_string, write, File},
     io::{self, Read, Write},
     path::PathBuf,
@@ -13,24 +14,22 @@ use super::git_object::GitObject;
 
 const GOT_DIR: &str = ".got";
 
-fn path_contains_segment(path: &PathBuf, to_compare: &str) -> bool {
-    path.iter()
-        .any(|segment| segment.to_str().unwrap() == to_compare)
-}
-
-fn list_files_in_path(path: &PathBuf) -> io::Result<Vec<PathBuf>> {
+fn list_files_in_path(path: &PathBuf, paths_to_ignore: &Vec<PathBuf>) -> io::Result<Vec<PathBuf>> {
     let mut files = vec![];
     let entries = read_dir(path).expect("Could not read entries from this dir.");
 
     for entry in entries {
         let entry_full_path = entry?.path();
 
-        if path_contains_segment(&entry_full_path, GOT_DIR) {
+        if paths_to_ignore
+            .iter()
+            .any(|path_to_ignore| entry_full_path.starts_with(path_to_ignore.to_str().unwrap()))
+        {
             continue;
         }
 
         if metadata(&entry_full_path)?.is_dir() {
-            files.extend(list_files_in_path(&entry_full_path).unwrap());
+            files.extend(list_files_in_path(&entry_full_path, paths_to_ignore).unwrap());
         } else if metadata(&entry_full_path)?.is_file() {
             files.push(entry_full_path);
         }
@@ -42,6 +41,7 @@ fn list_files_in_path(path: &PathBuf) -> io::Result<Vec<PathBuf>> {
 pub struct Repository {
     worktree: PathBuf,
     gotdir: PathBuf,
+    ignore: Vec<PathBuf>,
 }
 
 impl Repository {
@@ -75,9 +75,24 @@ impl Repository {
             panic!("Configuration file not found");
         }
 
+        // Read paths to ignore from .gitignore
+        let paths_to_ignore: Vec<PathBuf> = match read_to_string(path.join(".gitignore")) {
+            Ok(content) => content
+                .split("\n")
+                .map(|split| PathBuf::from(split))
+                .map(|path| {
+                    let mut absolute_path = env::current_dir().unwrap();
+                    absolute_path.push(path);
+                    absolute_path
+                })
+                .collect(),
+            Err(_) => vec![],
+        };
+
         return Repository {
             worktree: path,
             gotdir,
+            ignore: paths_to_ignore,
         };
     }
 
@@ -137,7 +152,7 @@ impl Repository {
     }
 
     pub fn list_files(&self) -> io::Result<Vec<PathBuf>> {
-        list_files_in_path(&self.worktree)
+        list_files_in_path(&self.worktree, &self.ignore)
     }
 
     // From current repository, return a parent directory that is an active repository.
